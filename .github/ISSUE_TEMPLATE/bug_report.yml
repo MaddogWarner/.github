@@ -1,0 +1,62 @@
+name: Bug Report
+description: Report a bug or unexpected behaviour
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Please fill in as much detail as possible.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: A clear description of what the bug is.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Step-by-step instructions to reproduce the behaviour.
+      placeholder: |
+        1. Start with config '...'
+        2. Run '...'
+        3. See error
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+      description: What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+      description: What actually happened? Include logs, error messages, or screenshots.
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, version of this software, relevant dependency versions.
+      placeholder: |
+        OS: Ubuntu 24.04
+        Version: 1.2.3
+        Node: 22.x / Python: 3.12
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Any other relevant information (config snippets, related issues, etc.).
