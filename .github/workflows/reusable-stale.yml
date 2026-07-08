@@ -1,0 +1,34 @@
+name: Reusable / Stale
+
+# The 5 existing copies were near-identical; one had an extra sentence on the
+# stale message. Standardised here; message is an input in case a repo wants
+# to override it (kept minimal — no other knobs added).
+
+on:
+  workflow_call:
+    inputs:
+      stale-issue-message:
+        type: string
+        default: >-
+          This issue has been automatically marked as stale because it has not had
+          recent activity. It will be closed if no further activity occurs.
+
+permissions:
+  issues: write
+
+jobs:
+  stale:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/stale@eb5cf3af3ac0a1aa4c9c45633dd1ae542a27a899 # v10.3.0
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          stale-issue-label: stale
+          exempt-issue-labels: pinned,security
+          stale-issue-message: ${{ inputs.stale-issue-message }}
+          days-before-issue-stale: 30
+          days-before-issue-close: 5
+          days-before-pr-close: -1
+          days-before-pr-stale: -1

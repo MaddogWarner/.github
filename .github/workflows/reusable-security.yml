@@ -1,0 +1,184 @@
+name: Reusable / Security
+
+# Called from consumer repos via workflow_call. See callers/ for usage examples.
+# Gitleaks and Semgrep always run. The dependency-audit step is selected by `ecosystem`.
+#
+# Step order is deliberate: secret detection (Gitleaks, then Semgrep p/secrets)
+# runs BEFORE any ecosystem audit, so a failing dependency audit can never mask
+# a leaked-secret finding in the same run.
+#
+# Blocking semantics (see DESIGN.md "What blocks vs reports"):
+#   - Gitleaks                          -> always blocks (secrets in history/working tree)
+#   - Semgrep p/secrets                 -> blocks
+#   - Semgrep p/default + p/owasp-top-ten -> reports only, does not fail the run
+#   - npm/pnpm audit --audit-level=critical -> blocks
+#   - pip-audit (against declared targets) -> blocks on any known vulnerability
+#     (no severity filter available); missing target files fail the job
+#   - dotnet list package --vulnerable  -> blocks on any advisory (no severity filter available)
+#   - Bandit (python), Trivy fs scan    -> report only, uploaded to the Security tab
+
+on:
+  workflow_call:
+    inputs:
+      ecosystem:
+        description: "Dependency ecosystem to audit: npm | pnpm | python | dotnet | none"
+        type: string
+        default: none
+      runs-on:
+        description: "Runner label (e.g. macos-latest for Swift repos)"
+        type: string
+        default: ubuntu-latest
+      node-version:
+        type: string
+        default: "20"
+      npm-install-args:
+        description: "Extra args appended to `npm ci --ignore-scripts` (e.g. --legacy-peer-deps)"
+        type: string
+        default: ""
+      python-version:
+        type: string
+        default: "3.12"
+      python-requirements:
+        description: >-
+          Space-separated pip-audit targets: each entry is either a requirements
+          file (audited with -r) or a directory containing pyproject.toml
+          (audited as a local project). A missing target fails the job — never
+          silently passes.
+        type: string
+        default: "requirements.txt"
+      working-directory:
+        description: "Subfolder containing package.json, for repos with a nested npm/pnpm project (e.g. frontend/)"
+        type: string
+        default: "."
+      trivy:
+        description: "Run Trivy filesystem scan and upload SARIF (report-only)"
+        type: boolean
+        default: true
+
+jobs:
+  security:
+    name: security
+    runs-on: ${{ inputs.runs-on }}
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+
+      # ---- secret detection first, so nothing downstream can mask it ----
+      - name: Gitleaks
+        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Semgrep secrets (blocks)
+        run: |
+          python3 -m pip install --quiet semgrep # python3 -m: `pip` isn't on PATH on macos runners
+          semgrep --config=p/secrets --error --quiet
+
+      - name: Semgrep default + OWASP (report-only)
+        run: semgrep --config=p/default --config=p/owasp-top-ten --quiet || true
+
+      # ---- npm ----
+      - name: Set up Node.js
+        if: inputs.ecosystem == 'npm' || inputs.ecosystem == 'pnpm'
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: ${{ inputs.node-version }}
+
+      - name: Set up pnpm
+        if: inputs.ecosystem == 'pnpm'
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+
+      - name: Install dependencies (npm)
+        if: inputs.ecosystem == 'npm'
+        working-directory: ${{ inputs.working-directory }}
+        run: npm ci --ignore-scripts ${{ inputs.npm-install-args }}
+
+      - name: npm audit (blocks on critical)
+        if: inputs.ecosystem == 'npm'
+        working-directory: ${{ inputs.working-directory }}
+        run: npm audit --audit-level=critical
+
+      - name: Install dependencies (pnpm)
+        if: inputs.ecosystem == 'pnpm'
+        working-directory: ${{ inputs.working-directory }}
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: pnpm audit (blocks on critical)
+        if: inputs.ecosystem == 'pnpm'
+        working-directory: ${{ inputs.working-directory }}
+        run: pnpm audit --audit-level=critical
+
+      # ---- python ----
+      - name: Set up Python
+        if: inputs.ecosystem == 'python'
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: ${{ inputs.python-version }}
+
+      - name: Install Python audit tools
+        if: inputs.ecosystem == 'python'
+        run: pip install pip-audit bandit
+
+      # Audits the declared project dependencies, not the runner's environment.
+      - name: pip-audit (blocks on any known vulnerability)
+        if: inputs.ecosystem == 'python'
+        run: |
+          set -e
+          for target in ${{ inputs.python-requirements }}; do
+            if [ -f "$target" ]; then
+              echo "Auditing requirements file: $target"
+              pip-audit -r "$target"
+            elif [ -d "$target" ] && [ -f "$target/pyproject.toml" ]; then
+              echo "Auditing local project: $target"
+              pip-audit "$target"
+            else
+              echo "::error::pip-audit target '$target' not found (expected a requirements file or a directory containing pyproject.toml)"
+              exit 1
+            fi
+          done
+
+      - name: Bandit SAST (report-only)
+        if: inputs.ecosystem == 'python'
+        run: bandit -r . -ll -x ./.git,./node_modules --quiet || true
+
+      # ---- dotnet ----
+      - name: Set up .NET
+        if: inputs.ecosystem == 'dotnet'
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
+        with:
+          dotnet-version: "9.0.x"
+
+      - name: dotnet restore
+        if: inputs.ecosystem == 'dotnet'
+        run: dotnet restore
+
+      - name: dotnet vulnerable-package check (blocks on any advisory)
+        if: inputs.ecosystem == 'dotnet'
+        run: |
+          output=$(dotnet list package --vulnerable --include-transitive 2>&1)
+          echo "$output"
+          if echo "$output" | grep -q "has the following vulnerable packages"; then
+            echo "::error::Vulnerable NuGet package(s) found"
+            exit 1
+          fi
+
+      # ---- report-only scanners ----
+      - name: Trivy filesystem scan (report-only)
+        if: inputs.trivy
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: sarif
+          output: trivy-results.sarif
+          severity: CRITICAL,HIGH
+
+      - name: Upload Trivy results
+        if: inputs.trivy && always()
+        uses: github/codeql-action/upload-sarif@54f647b7e1bb85c95cddabcd46b0c578ec92bc1a # v4.36.3
+        with:
+          sarif_file: trivy-results.sarif
