@@ -2,16 +2,41 @@
 
 import itertools
 import os
-from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from pathlib import Path
 
 WORKFLOW = (
     Path(__file__).resolve().parents[1]
     / ".github/workflows/reusable-dependabot-automerge.yml"
 )
-DENYLIST = "bcrypt bcryptjs cryptography pyopenssl jwcrypto argon2 argon2-cffi scrypt tweetnacl libsodium-wrappers node-forge jsonwebtoken jose node-jose python-jose pyjwt passlib authlib oauthlib requests-oauthlib certifi fast-uri ip ip-address".split()
+DENYLIST = [
+    "bcrypt",
+    "bcryptjs",
+    "cryptography",
+    "pyopenssl",
+    "jwcrypto",
+    "argon2",
+    "argon2-cffi",
+    "scrypt",
+    "tweetnacl",
+    "libsodium-wrappers",
+    "node-forge",
+    "jsonwebtoken",
+    "jose",
+    "node-jose",
+    "python-jose",
+    "pyjwt",
+    "passlib",
+    "authlib",
+    "oauthlib",
+    "requests-oauthlib",
+    "certifi",
+    "fast-uri",
+    "ip",
+    "ip-address",
+]
 
 
 def policy_script() -> str:
@@ -19,10 +44,7 @@ def policy_script() -> str:
     body = text.split("        run: |\n", 1)[1].split(
         "\n      - name: Enable auto-merge", 1
     )[0]
-    return "\n".join(
-        line[10:] if line.startswith("          ") else line
-        for line in body.splitlines()
-    )
+    return "\n".join(line.removeprefix("          ") for line in body.splitlines())
 
 
 class PolicyTests(unittest.TestCase):
@@ -54,9 +76,9 @@ class PolicyTests(unittest.TestCase):
 
     def test_allow_tiers(self) -> None:
         for args in [
-            dict(update="patch"),
-            dict(scope="direct:development"),
-            dict(advisory="GHSA-gcfj-64vw-6mp9"),
+            {"update": "patch"},
+            {"scope": "direct:development"},
+            {"advisory": "GHSA-gcfj-64vw-6mp9"},
         ]:
             with self.subTest(args=args):
                 self.assertEqual(self.decision(**args), "decision=yes")
@@ -116,7 +138,7 @@ class PolicyTests(unittest.TestCase):
             if key not in {"UPDATE_TYPE", "DEP_TYPE", "DEP_NAMES", "GHSA_ID"}
         }
         result = subprocess.run(
-            ["bash", "-c", policy_script()], env=env, capture_output=True
+            ["bash", "-c", policy_script()], env=env, capture_output=True, check=False
         )
         self.assertNotEqual(result.returncode, 0)
 
