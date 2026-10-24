@@ -1,7 +1,7 @@
 name: Reusable / Dependabot auto-merge
 
-# All 13 consumer copies of this workflow were byte-identical at time of design,
-# so this is a straight lift with no behavioural change. No inputs needed.
+# Allow patches, development minors, and advisory-fixing minors.
+# Always deny majors and runtime crypto/auth dependencies; no inputs needed.
 
 on:
   workflow_call: {}
@@ -21,8 +21,53 @@ jobs:
         id: metadata
         uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
 
-      - name: Auto-merge patch updates
-        if: steps.metadata.outputs.update-type == 'version-update:semver-patch'
+      - name: Evaluate auto-merge policy
+        id: policy
+        env:
+          UPDATE_TYPE: ${{ steps.metadata.outputs.update-type }}
+          DEP_TYPE: ${{ steps.metadata.outputs.dependency-type }}
+          DEP_NAMES: ${{ steps.metadata.outputs.dependency-names }}
+          GHSA_ID: ${{ steps.metadata.outputs.ghsa-id }}
+        run: |
+          set -euo pipefail
+          DENYLIST="bcrypt bcryptjs cryptography pyopenssl jwcrypto argon2 argon2-cffi scrypt tweetnacl libsodium-wrappers node-forge jsonwebtoken jose node-jose python-jose pyjwt passlib authlib oauthlib requests-oauthlib certifi fast-uri ip ip-address"
+          decision=no
+          reason="no allow rule matched"
+
+          if [ "$UPDATE_TYPE" = "version-update:semver-major" ]; then
+            reason="major version bump — always manual"
+          else
+            blocked=""
+            # DEP_NAMES is comma-separated; match whole names only.
+            # Guard the array read/loop because empty arrays are unset in older Bash.
+            if [ -n "$DEP_NAMES" ]; then
+              IFS=',' read -ra names <<< "$DEP_NAMES"
+              for n in "${names[@]}"; do
+                n="$(echo "$n" | tr '[:upper:]' '[:lower:]' | xargs)"
+                for d in $DENYLIST; do
+                  if [ "$n" = "$d" ]; then
+                    blocked="$n"
+                  fi
+                done
+              done
+            fi
+
+            if [ -n "$blocked" ] && [ "$DEP_TYPE" != "direct:development" ]; then
+              reason="runtime crypto/auth dependency ($blocked) — always manual"
+            elif [ "$UPDATE_TYPE" = "version-update:semver-patch" ]; then
+              decision=yes; reason="patch update"
+            elif [ "$DEP_TYPE" = "direct:development" ] && [ "$UPDATE_TYPE" = "version-update:semver-minor" ]; then
+              decision=yes; reason="dev-dependency minor update"
+            elif [ -n "$GHSA_ID" ] && [ -n "$DEP_NAMES" ] && [ "$UPDATE_TYPE" = "version-update:semver-minor" ]; then
+              decision=yes; reason="minor update closing advisory $GHSA_ID"
+            fi
+          fi
+
+          echo "decision=$decision" >> "$GITHUB_OUTPUT"
+          echo "Auto-merge: $decision — $reason" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Enable auto-merge
+        if: steps.policy.outputs.decision == 'yes'
         run: gh pr merge --auto --squash "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
