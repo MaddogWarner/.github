@@ -36,6 +36,10 @@ DENYLIST = [
     "fast-uri",
     "ip",
     "ip-address",
+    "@azure/msal-node",
+    "@azure/msal-common",
+    "@azure/msal-node-extensions",
+    "@azure/identity",
 ]
 
 
@@ -124,6 +128,28 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(
             self.decision(scope="direct:development", names="bcrypt"), "decision=yes"
         )
+
+    def test_azure_auth_exact_names_and_development_exception(self) -> None:
+        for name in [
+            "@azure/msal-node",
+            "@azure/msal-common",
+            "@azure/msal-node-extensions",
+            "@azure/identity",
+        ]:
+            with self.subTest(name=name):
+                for update in ["patch", "minor"]:
+                    self.assertEqual(
+                        self.decision(update, "direct:development", name),
+                        "decision=yes",
+                    )
+                self.assertEqual(
+                    self.decision("major", "direct:development", name, "GHSA-example"),
+                    "decision=no",
+                )
+                self.assertEqual(
+                    self.decision(names=f"{name}-wrapper", advisory="GHSA-example"),
+                    "decision=yes",
+                )
 
     def test_defined_empty_metadata(self) -> None:
         self.assertEqual(
