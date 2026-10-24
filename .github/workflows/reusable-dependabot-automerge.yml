@@ -30,7 +30,7 @@ jobs:
           GHSA_ID: ${{ steps.metadata.outputs.ghsa-id }}
         run: |
           set -euo pipefail
-          DENYLIST="bcrypt bcryptjs cryptography pyopenssl jwcrypto argon2 argon2-cffi scrypt tweetnacl libsodium-wrappers node-forge jsonwebtoken jose node-jose python-jose pyjwt passlib authlib oauthlib requests-oauthlib certifi fast-uri ip ip-address"
+          DENYLIST="bcrypt bcryptjs cryptography pyopenssl jwcrypto argon2 argon2-cffi scrypt tweetnacl libsodium-wrappers node-forge jsonwebtoken jose node-jose python-jose pyjwt passlib authlib oauthlib requests-oauthlib certifi fast-uri ip ip-address @azure/msal-node @azure/msal-common @azure/msal-node-extensions @azure/identity"
           decision=no
           reason="no allow rule matched"
 
